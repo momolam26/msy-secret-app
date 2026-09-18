@@ -8,9 +8,11 @@
     <application
         android:label="msy_secret_app"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:usesCleartextTraffic="true"
+    >
         <service
-            android:name="im.nfc.notification_listener_service.NotificationListener"
+            android:name="notification.listener.service.NotificationListener"
             android:label="Msy Secret Notifications"
             android:exported="true"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
