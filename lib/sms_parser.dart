@@ -4,7 +4,7 @@ class SmsParser {
   static String omSenderName = 'Orange Money';
 
   // Package ID de l'app Wave Business
-  static const String wavePackageId = 'com.wave.mobile.ci';
+  static const String wavePackageId = 'com.wave.business';
 
   /// Parse une notification Wave Business
   /// Format : "Paiement À DISTANCE reçu: Marie Paule (0787030631) a payé 12.000F le 16/09/2026 19h47."
@@ -36,12 +36,16 @@ class SmsParser {
 
   /// Parse un SMS entrant (SMS ou notification)
   static Map<String, dynamic>? parse(String body, String sender) {
+    // Wave Business — par nom d'expéditeur
     if (sender == waveSenderName) {
       return _parseWaveSms(body);
     }
-    if (sender == omSenderName) {
+
+    // Orange Money — par nom d'expéditeur OU si le corps correspond au format OM
+    if (sender == omSenderName || _parseOrangeMoney(body) != null) {
       return _parseOrangeMoney(body);
     }
+
     return null;
   }
 
@@ -68,16 +72,24 @@ class SmsParser {
 
   /// Parse SMS Orange Money CI
   static Map<String, dynamic>? _parseOrangeMoney(String sms) {
+    // Montant : "15150.00F"
     final amountRegex = RegExp(
-      r'Transfert de ([\d\.]+)F recu du',
+      r'Transfert de ([\d\.]+)F recu de',
       caseSensitive: false,
     );
-    final phoneRegex = RegExp(r'recu du (\d{10})', caseSensitive: false);
+    // Numéro après le nom — peut commencer par + ou 0
+    final phoneRegex = RegExp(r'\+?(225)?(\d{9,10})');
 
     final amountMatch = amountRegex.firstMatch(sms);
-    final phoneMatch = phoneRegex.firstMatch(sms);
+    if (amountMatch == null) return null;
 
-    if (amountMatch == null || phoneMatch == null) return null;
+    // Cherche tous les numéros dans le SMS
+    final phoneMatches = phoneRegex.allMatches(sms).toList();
+    if (phoneMatches.isEmpty) return null;
+
+    // Le numéro de l'expéditeur est le dernier trouvé
+    final phoneMatch = phoneMatches.last;
+    final phoneStr = phoneMatch.group(2)!; // Sans l'indicatif
 
     final amountStr = amountMatch.group(1)!.split('.')[0];
     final amount = double.tryParse(amountStr);
@@ -85,7 +97,7 @@ class SmsParser {
 
     return {
       'amount': amount,
-      'phone': phoneMatch.group(1)!,
+      'phone': phoneStr,
       'payment_method': 'orange_money',
     };
   }

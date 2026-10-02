@@ -99,11 +99,14 @@ class _HomePageState extends State<HomePage>
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this); // ✅ Ajoute ça
+    WidgetsBinding.instance.addObserver(this);
     _tabController = TabController(length: 3, vsync: this);
+
     try {
-      _loadSettings();
-      _processMissedSms();
+      // ✅ _processMissedSms s'exécute APRÈS _loadSettings
+      _loadSettings().then((_) {
+        _startSmsListener();
+      });
       _startNotificationListener();
       _loadUnpaidOrders();
     } catch (e) {
@@ -113,7 +116,7 @@ class _HomePageState extends State<HomePage>
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this); // ✅ Ajoute ça
+    WidgetsBinding.instance.removeObserver(this);
     _tabController.dispose();
     super.dispose();
   }
@@ -142,15 +145,72 @@ class _HomePageState extends State<HomePage>
     });
   }
 
+  static const _smsChannel = EventChannel('msy_secret/sms');
+
+  Future<void> _startSmsListener() async {
+    final permission = await Permission.sms.request();
+    if (!permission.isGranted) return;
+
+    _smsChannel.receiveBroadcastStream().listen((event) async {
+      final sender = event['address'] as String? ?? '';
+      final body = event['body'] as String? ?? '';
+
+      debugPrint('SMS reçu de: $sender | $body');
+
+      final result = SmsParser.parse(body, sender);
+      if (result == null) {
+        setState(() => _lastResult = '❌ SMS ignoré — $sender');
+        return;
+      }
+
+      setState(() {
+        _lastActivity = '[SMS OM]\n$body';
+        _lastResult = '✅ OM — ${result['amount']} FCFA de ${result['phone']}';
+      });
+
+      final response = await ApiService.notifyPayment(
+        amount: result['amount'],
+        phone: result['phone'],
+        paymentMethod: result['payment_method'],
+      );
+
+      _addToHistory(
+        method: 'orange_money',
+        amount: result['amount'].toString(),
+        phone: result['phone'],
+        order: response['order_number'] ?? '',
+        success: response['success'] == true,
+      );
+
+      if (response['success'] == true) {
+        _loadUnpaidOrders();
+        await _showNotification(
+          title: '✅ Paiement OM confirmé',
+          body:
+              'Commande ${response['order_number']} — ${result['amount'].toStringAsFixed(0)} FCFA',
+        );
+      } else {
+        await _showNotification(
+          title: '⚠️ Paiement OM non trouvé',
+          body:
+              '${result['amount'].toStringAsFixed(0)} FCFA de ${result['phone']}',
+        );
+      }
+    });
+
+    setState(() => _isListening = true);
+  }
+
   Future<void> _saveSettings() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('api_token', _tokenController.text.trim());
+    debugPrint('Token sauvegardé: ${_tokenController.text.trim()}');
     await prefs.setString('wave_sender', _waveSenderController.text.trim());
     await prefs.setString('om_sender', _omSenderController.text.trim());
 
     SmsParser.waveSenderName = _waveSenderController.text.trim();
     SmsParser.omSenderName = _omSenderController.text.trim();
-
+    await _loadUnpaidOrders();
     await ApiService.saveToken(_tokenController.text.trim());
 
     if (mounted) {
@@ -180,10 +240,16 @@ class _HomePageState extends State<HomePage>
   Future<void> _loadUnpaidOrders() async {
     setState(() => _loadingOrders = true);
     final orders = await ApiService.getUnpaidOrders();
+    debugPrint('Commandes reçues: ${orders.length}');
     setState(() {
       _unpaidOrders = orders;
       _loadingOrders = false;
     });
+  }
+
+  Future<void> _refreshOrders() async {
+    await _loadUnpaidOrders();
+    await _startSmsListener();
   }
 
   Future<void> _confirmOrder(int orderId, String paymentMethod) async {
@@ -230,17 +296,23 @@ class _HomePageState extends State<HomePage>
 
   Future<void> _processMissedSms() async {
     final permission = await Permission.sms.request();
+    debugPrint('Permission SMS: $permission');
+
     if (!permission.isGranted) return;
+    debugPrint('Sender OM: ${SmsParser.omSenderName}');
 
     final messages = await query.querySms(
       kinds: [SmsQueryKind.inbox],
       address: SmsParser.omSenderName,
       count: 50,
     );
+    debugPrint('Nombre de SMS trouvés: ${messages.length}');
 
     final cutoff = DateTime.now().subtract(const Duration(hours: 48));
 
     for (final msg in messages) {
+      debugPrint('FROM: ${msg.address} | BODY: ${msg.body?.substring(0, 30)}');
+
       final date = msg.date;
       if (date == null || date.isBefore(cutoff)) continue;
 
@@ -364,12 +436,9 @@ class _HomePageState extends State<HomePage>
         actions: [
           // Statut connexion
           IconButton(
-            icon: Icon(
-              _isConnected ? Icons.cloud_done : Icons.cloud_off,
-              color: _isConnected ? Colors.green : Colors.red,
-            ),
-            onPressed: _testConnection,
-            tooltip: 'Tester la connexion',
+            icon: const Icon(Icons.refresh, color: Color(0xFF4D0E14)),
+            onPressed: _refreshOrders, // ✅ Au lieu de _loadUnpaidOrders
+            tooltip: 'Rafraîchir',
           ),
         ],
         bottom: TabBar(
@@ -793,6 +862,8 @@ class _OrderCardState extends State<_OrderCard> {
       text:
           widget.order['payment_phone'] ?? widget.order['customer_phone'] ?? '',
     );
+    // ✅ Initialise avec la valeur reçue du serveur
+    _selectedMethod = widget.order['payment_method'] ?? 'wave';
   }
 
   @override

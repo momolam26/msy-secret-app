@@ -5,8 +5,7 @@ import 'package:flutter/foundation.dart'; // ✅ Ajoute cette ligne
 import 'package:shared_preferences/shared_preferences.dart';
 
 class ApiService {
-  static const String baseUrl =
-      'https://pancake-lion-unsent.ngrok-free.dev/api';
+  static const String baseUrl = 'https://msysecrets.com/api';
 
   static Future<String?> getToken() async {
     final prefs = await SharedPreferences.getInstance();
@@ -19,9 +18,9 @@ class ApiService {
   }
 
   static Future<Map<String, String>> _headers() async {
-    // final token = await getToken();
-    const token = '1|d7hUWDDLpb8f9HUJ7ToV6DF1mqwDiVlt0OzOLMDwe842692a';
-
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('api_token') ?? '';
+    debugPrint('Token lu directement: "$token"');
     return {
       'Authorization': 'Bearer $token',
       'Content-Type': 'application/json',
@@ -44,23 +43,6 @@ class ApiService {
       return {'success': false, 'message': e.toString()};
     }
   }
-  // static Future<Map<String, dynamic>> ping() async {
-  //   try {
-  //     final token = await getToken();
-  //     debugPrint('Token utilisé: $token');
-  //     debugPrint('URL: $baseUrl/ping');
-
-  //     final response = await http
-  //         .get(Uri.parse('$baseUrl/ping'), headers: await _headers())
-  //         .timeout(const Duration(seconds: 5));
-
-  //     debugPrint('Response: ${response.statusCode} ${response.body}');
-  //     return jsonDecode(response.body);
-  //   } catch (e) {
-  //     debugPrint('Erreur ping: $e');
-  //     return {'success': false, 'message': 'Serveur inaccessible: $e'};
-  //   }
-  // }
 
   // Détection automatique de paiement
   static Future<Map<String, dynamic>> notifyPayment({
@@ -91,6 +73,8 @@ class ApiService {
         Uri.parse('$baseUrl/orders/unpaid'),
         headers: await _headers(),
       );
+      debugPrint('Orders status: ${response.statusCode}');
+      debugPrint('Orders body: ${response.body}');
       final data = jsonDecode(response.body);
       return data['orders'] ?? [];
     } catch (e) {
